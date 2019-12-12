@@ -1,0 +1,81 @@
+import scrapy as sp
+import re
+import pandas as pd
+from DngHonda.items import *
+class DngHonda_Spider(sp.Spider):
+    name="DHspider"
+    allow_domians = ["dongfeng-honda.com"]
+
+    def start_requests(self):
+        urls=["http://www.dongfeng-honda.com/dot_query.shtml"]
+
+        for url in urls:
+            yield sp.Request(url=url, callback=self.parse)  # 爬取到的页面如何处理？提交给parse方法处理
+
+    def parse(self, response):
+        filename = 'DngHonda.html'  # 拼接文件名，如果是第一页，最终文件名便是：mingyan-1.html
+        with open(filename, 'wb') as f:  # python文件操作，不多说了；
+            f.write(response.body)  # 刚才下载的页面去哪里了？response.body就代表了刚才下载的页面！
+        self.log('保存文件: %s' % filename)
+
+        markpro=response.xpath('//select[@name="province"]/option/@value').getall()[1:]
+        markproid= response.xpath('//select[@name="province"]/option/@province_id').getall()
+        print(markpro)
+        print(markproid)
+        #citydict={}
+        #for ipro in markproid:
+        
+        #network 中
+        custom_settings = {
+            "DEFAULT_REQUEST_HEADERS": {
+                'Accept': '*/*',
+                'Accept-Encoding': 'gzip, deflate',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Connection': 'keep-alive',
+                'Content-Length': '31',
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Cookie': '_ga=GA1.2.996062614.1575354234; _gid=GA1.2.841205990.1575852469; Hm_lvt_9b73ca226fcb810b1fe9d172d6590f3c=1575506074,1575533360,1575599037,1575852469; td_cookie=3801552605; Hm_lpvt_9b73ca226fcb810b1fe9d172d6590f3c=1575857453; pt_s_26906001=vt=1575857453889&cad=; _gat_gtag_UA_140912514_1=1; pt_26906001=uid=jCacfn-xbg3ozsOGDQ/HXA&nid=0&vid=o9c7JDLO28atVdq3h3J3GA&vn=20&pvn=2&sact=1575857456025&to_flag=0&pl=vaRn/yBB0WiyfFGcKgxvYw*pt*1575857453889',
+                'Host': 'www.dongfeng-honda.com',
+                'Origin': 'http://www.dongfeng-honda.com',
+                'Referer': 'http://www.dongfeng-honda.com/dot_query.shtml',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/78.0.3904.108 Safari/537.36',
+                'X-Requested-With': "XMLHttpRequest"}}
+        form_data={'dealer_type':'dot_query','ajax':'true'} #提交数据类型才能返回想要的结果
+        for index,value in enumerate(markproid):
+            geturl="http://www.dongfeng-honda.com/index/get_city_bypid/%s"%markproid[index]
+            yield sp.FormRequest(geturl,formdata=form_data,headers=custom_settings,
+                                 callback=lambda response,pro=markpro[index]:self.cityparse(response,pro))#yield
+
+    def cityparse(self,response,province):
+        jsonBody =response.xpath('//option/@value').getall()[1:]
+        print(jsonBody)
+        for icity in jsonBody:
+            geturl = "http://www.dongfeng-honda.com/dot_query.shtml?province=%s&city=%s"%(province,icity)
+            yield sp.Request(url=geturl, callback=lambda response,pro=province,getcity=icity :self.getparse(response,pro,getcity))
+
+    def getparse(self,response,pro,getcity):
+
+        raw_dlr_info=response.xpath('//section[@class="stores"]/ul/li').getall()[0]
+        pattern_dlr = re.compile(r'<h4>(.*?)</h4>[\d\D]*?<p>(.*?)</p>[\d\D]*?<p>(.*?)</p>[\d\D]*?<p>(.*?)</p>')
+        coldlr=["DisName","address","sale_tel","serv_tel"]
+        dlr_info = pd.DataFrame(re.findall(pattern_dlr, raw_dlr_info), columns=coldlr)
+
+        raw_gps_data = response.xpath('//script[@type="text/javascript"]').getall()[1]
+        pattern_gps = re.compile(r'new BMap.Point[(](.*?),(.*?)[)];')
+        colgps = ["lng", "lat"]
+        gps_info = pd.DataFrame(re.findall(pattern_gps, raw_gps_data)[:len(dlr_info)], columns=colgps)
+        #print(re.findall(pattern_dlr, raw_dlr_info))
+        #print(re.findall(pattern_gps, raw_gps_data))
+        result=pd.concat([dlr_info,gps_info],axis=1)
+        for row in range(len(result)):
+            #print(result)
+            item = DnghondaItem()
+            item["DisName"]=result["DisName"][row]
+            item["address"]=result["address"][row]
+            item["province"]=pro
+            item["city"]=getcity
+            item["sale_tel"]=result["sale_tel"][row]
+            item["serv_tel"]=result["serv_tel"][row]
+            item["lng"]=result["lng"][row]
+            item["lat"]=result["lat"][row]
+            yield item
