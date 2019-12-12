@@ -1,0 +1,20 @@
+
+import pandas as pd
+import numpy as np
+from sklearn.externals import joblib
+import matplotlib.pyplot as plt
+from impala.dbapi import connect
+from impala.util import as_pandas
+
+def getDataframe(query):
+    conn = connect(host='10.109.46.22', port=21050, user='1707496', password='1707496!01', auth_mechanism='PLAIN')
+    cur = conn.cursor()
+
+    cur.execute(query)
+    df = as_pandas(cur)
+
+    return df
+
+df = getDataframe("""SELECT * FROM HKGC_TMS_MSTR.PROCESS_DATA""")
+
+#之后直接建模型
