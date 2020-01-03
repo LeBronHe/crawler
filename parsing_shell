@@ -1,0 +1,71 @@
+#!/bin/bash
+
+confname="sunroof"
+#parser_jar="./commons-spark-modules-configmaker-assembly-1.1.16.jar"
+
+# 1day*24hour*3600sec=86400(sec)
+period="86400"
+
+# Date Array，change to timestamp 
+STARTDATES=$(date -d "20191224 00:00:00" +%s)
+ENDDATES=$(date -d "20191225 00:00:00" +%s)
+datevar=("172800")
+
+while [[ "$STARTDATES" -le "$ENDDATES" ]];
+        do
+        # date format - %F: YYYY-MM-DD / %Y%m%d: YYYYMMDD
+        # change timestamp to %Y%m%d
+        DATE_STR=$(date -d "@$STARTDATES" +%Y%m%d)
+        datevar+=("$DATE_STR")
+        #add one day
+        let STARTDATES+=period
+        done
+
+for ((i=1; i<${#datevar[@]}; i++));
+        do
+        startrundate="${datevar[i]}"
+        endtempdate=$(date -d "${datevar[i]:0:8}" +%s)
+
+        let endtempdate+=(period - 1)
+        endrundate=$(date -d "@$endtempdate" +%Y%m%d)
+
+        echo "---------- START iteration BATCH $i times -----------------------"
+        echo " Variables used in iteration"
+        #echo "  -  datevar                : ${datevar[i]}"
+        echo "  -  start rundate          : $startrundate"
+        echo "  -  end rundate            : $endrundate"
+        echo "  -  confname               : $confname"
+        echo "-----------------------------------------------------------------"
+        
+        #cp -rf ./$sunroof.conf
+        cp -rf ./sunroof.conf ./tmp.conf
+        
+        #Modify the conf file contents
+        sed -i 's/_startrundate_/'$startrundate'/g' tmp.conf
+        
+        echo "... (itr $i): make a batch table"
+
+        spark-submit \
+        --jars ./commons-spark-modules-configmaker-assembly-1.1.16.jar \
+        --name "spark-parsing" --class com.hkmc.bigdata.vcrm.datainteg.main.MainApp \
+        --master yarn-client  --driver-cores 2 --executor-cores 3 --executor-memory 32G \
+        --driver-java-options="-Dconfig.file=./tmp.conf" ./vcrm2-hdfs-batch-loader-assembly-2.0.1.jar;
+        
+        #$parser_jar \
+        #2>&1 | tee ./log/$startrundate"_"$endrundate.log;
+        
+	hive -e "create table if not exists rnd_19.sunroof_mstr (
+	 vin string,  prj_vehl_cd string,  ignitiontime string,  ignofftime string,  tripLength int,  
+	trip_distance double,  trip_odometer double,  start_latitude double,  start_longitude double,  
+	stop_latitude double,  stop_longitude double,  sunroof_use_cnt bigint,  sunroof_use_time_all bigint,  
+	sunroof_use_time_max bigint,  sunroof_use_time_min bigint,  sunroof_use_vs_max double,  
+	sunroof_use_vs_min double,  sunroof_use_vs_avg double) partitioned by (p_date string)  stored as parquet";	
+
+	hive -e "SET parquet.compression=gzip";
+
+	echo "input data to database";
+
+	hive -e "LOAD DATA inpath '/user/1908550/VCRM2.0_parsing/fca/*.parquet' INTO TABLE rnd_19.sunroof_mstr  partition(p_date='$startrundate')";
+	echo "load was finished!";
+
+    done
